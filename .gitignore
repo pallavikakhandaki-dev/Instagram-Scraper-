@@ -1,0 +1,19 @@
+# Virtual Environment
+.venv
+
+# Secrets and sensitive data
+secrets/
+cookies.pkl
+
+# Data folders (scraped data)
+Profile Scraper/data/
+Links Scraper/data/
+
+# Old data folders (legacy)
+instagram_data
+facebook_data
+
+# IDE and system files
+.claude/
+*.pyc
+__pycache__/
