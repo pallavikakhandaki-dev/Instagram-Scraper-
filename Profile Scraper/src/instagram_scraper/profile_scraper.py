@@ -24,7 +24,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 # --- Configuration & Setup ---
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-cookies_file = os.path.join("..", "..", "..", "secrets", "cookies.pkl")
+cookies_file = os.path.join(project_root, "secrets", "cookies.pkl")
 output_dir = os.path.join(project_root, "data", "instagram_data")
 excel_dir = os.path.join(project_root, "data", "excel_data")
 
@@ -43,6 +43,76 @@ def load_cookies(driver, filename):
                 except: pass
         print(f"Cookies loaded from {filename}")
 
+
+def validate_instagram_session():
+    """
+    Returns True if cookies produce a logged-in Instagram session, else False.
+    """
+    if not os.path.exists(cookies_file):
+        return False
+
+    try:
+        with open(cookies_file, "rb") as f:
+            cookies = pickle.load(f)
+        if not isinstance(cookies, list) or not cookies:
+            return False
+        # sessionid is the key cookie for authenticated session
+        has_session_cookie = any(
+            isinstance(c, dict) and c.get("name") == "sessionid" and str(c.get("value", "")).strip()
+            for c in cookies
+        )
+        if not has_session_cookie:
+            return False
+    except Exception:
+        return False
+
+    chrome_opts = Options()
+    chrome_opts.add_argument("--incognito")
+    chrome_opts.add_argument("--headless=new")
+    chrome_opts.add_argument("--disable-gpu")
+    chrome_opts.add_argument("--window-size=1280,800")
+    chrome_opts.add_argument("--disable-blink-features=AutomationControlled")
+
+    driver = None
+    try:
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_opts)
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        driver.get("https://www.instagram.com/")
+        random_sleep(2, 3)
+        load_cookies(driver, cookies_file)
+        driver.refresh()
+        random_sleep(3, 5)
+
+        # Visit a login-required page to verify session strongly.
+        driver.get("https://www.instagram.com/accounts/edit/")
+        random_sleep(2, 4)
+
+        current = (driver.current_url or "").lower()
+        if "accounts/login" in current:
+            return False
+
+        login_inputs = driver.find_elements(By.XPATH, "//input[@name='username' or @name='password']")
+        if login_inputs:
+            return False
+
+        login_links = driver.find_elements(By.XPATH, "//a[contains(@href, '/accounts/login')]")
+        if login_links:
+            return False
+
+        page_text = (driver.execute_script("return document.body.innerText || ''") or "").lower()
+        login_markers = ["log in", "login", "password", "sign up"]
+        if any(m in page_text for m in login_markers) and "profile" not in page_text:
+            return False
+        return True
+    except Exception:
+        return False
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+
 def parse_timeframe(timeframe_str):
     now = datetime.now(timezone.utc)
     if not timeframe_str or timeframe_str.lower() == 'all': return None
@@ -54,6 +124,19 @@ def parse_timeframe(timeframe_str):
     if unit.startswith('w'): return now - timedelta(weeks=value)
     if unit.startswith('m'): return now - timedelta(days=value * 30)
     return None
+
+
+def parse_date_range(start_date_str, end_date_str):
+    if not start_date_str or not end_date_str:
+        return None, None
+    try:
+        start_dt = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        end_dt = datetime.strptime(end_date_str, "%Y-%m-%d").replace(
+            hour=23, minute=59, second=59, tzinfo=timezone.utc
+        )
+        return start_dt, end_dt
+    except Exception:
+        return None, None
 
 # --- Extraction Helpers ---
 
@@ -168,7 +251,7 @@ def save_realtime_json(filepath, data):
 
 # --- Core Logic ---
 
-def run_unified_scraper(leader_name=None, tf_input=None, output_path=None):
+def run_unified_scraper(leader_name=None, tf_input=None, output_path=None, start_date=None, end_date=None):
     try:
         leaders_path = os.path.join(project_root, "config", "leaders.json")
         with open(leaders_path, "r") as f: leaders = json.load(f)
@@ -183,6 +266,7 @@ def run_unified_scraper(leader_name=None, tf_input=None, output_path=None):
     if tf_input is None:
         tf_input = input("Selection: ").strip()
     cutoff_dt = parse_timeframe(tf_input)
+    range_start_dt, range_end_dt = parse_date_range(start_date, end_date)
 
     chrome_opts = Options()
     chrome_opts.add_argument("--incognito")
@@ -271,15 +355,28 @@ def run_unified_scraper(leader_name=None, tf_input=None, output_path=None):
                     try:
                         # FAST STEP: Metadata
                         post_data = extract_meta_only(driver, normalized)
-                        if post_data["timestamp"] and cutoff_dt:
+                        if post_data["timestamp"]:
                             ts = datetime.fromisoformat(post_data["timestamp"].replace('Z', '+00:00'))
-                            if ts < cutoff_dt:
-                                if not pinned:
-                                    print("  -> Too old. Stopping.")
-                                    driver.close(); driver.switch_to.window(main_win); stop_p = True; break
-                                else:
-                                    print("  -> Pinned but old. Skipping.")
+
+                            if range_start_dt and range_end_dt:
+                                if ts < range_start_dt:
+                                    if not pinned:
+                                        print("  -> Older than custom range. Stopping.")
+                                        driver.close(); driver.switch_to.window(main_win); stop_p = True; break
+                                    else:
+                                        print("  -> Pinned but older than custom range. Skipping.")
+                                        driver.close(); driver.switch_to.window(main_win); continue
+                                if ts > range_end_dt:
+                                    print("  -> Newer than custom range end. Skipping.")
                                     driver.close(); driver.switch_to.window(main_win); continue
+                            elif cutoff_dt:
+                                if ts < cutoff_dt:
+                                    if not pinned:
+                                        print("  -> Too old. Stopping.")
+                                        driver.close(); driver.switch_to.window(main_win); stop_p = True; break
+                                    else:
+                                        print("  -> Pinned but old. Skipping.")
+                                        driver.close(); driver.switch_to.window(main_win); continue
                         
                         # Within timeframe: IMMEDIATE UPDATE
                         profile_entry["posts"].append(post_data)
