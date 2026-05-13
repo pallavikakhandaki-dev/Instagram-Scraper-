@@ -40,7 +40,8 @@ from selenium.webdriver.support import expected_conditions as EC
 # ─────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────
-cookies_file = os.path.join("..", "..", "..", "secrets", "cookies.pkl")
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+cookies_file = os.path.join(project_root, "secrets", "cookies.pkl")
 HTML_FILES_DIR = os.path.abspath(os.path.join("..", "..", "html_files"))
 
 # ─────────────────────────────────────────────
@@ -61,6 +62,9 @@ chrome_options.add_argument(f"accept-language={custom_headers['Accept-Language']
 chrome_options.add_argument("--incognito")
 chrome_options.add_argument("--start-maximized")
 chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+chrome_options.add_argument("--headless=new")
+chrome_options.add_argument("--disable-gpu")
+chrome_options.add_argument("--window-size=1920,1080")
 chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
 chrome_options.add_experimental_option("useAutomationExtension", False)
 
