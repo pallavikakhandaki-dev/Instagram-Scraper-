@@ -1,4 +1,0 @@
-# Example Instagram post URLs
-# One URL per line
-# https://www.instagram.com/p/example1/
-# https://www.instagram.com/reel/example2/
